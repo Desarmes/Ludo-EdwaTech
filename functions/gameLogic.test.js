@@ -40,7 +40,7 @@ test('rank thresholds advance through the requested tiers', () => {
   assert.equal(rankForPoints(0), 'Bronze');
   assert.equal(rankForPoints(1800), 'Diamond');
   assert.equal(rankForPoints(2500), 'Master');
-  assert.equal(rankForPoints(3300), 'Legend');
+  assert.equal(rankForPoints(3300), 'Legende');
   assert.equal(rankForPoints(4200), 'Mythic');
 });
 
@@ -53,8 +53,9 @@ test('only legal pawns are offered after a roll', () => {
 test('a move captures an opponent away from a safe square', () => {
   const room = makeRoom({
     red: { color: 0, pawns: { ...newPawns(), 0: 1 } },
-    teal: { color: 1, pawns: { ...newPawns(), 0: 26 } }
+    teal: { color: 2, pawns: { ...newPawns(), 0: 26 } }
   }, 'teal', 1);
+  room.turnOrder = ['red', 'teal'];
   const result = movePawn(room, 'teal', 0);
   assert.equal(result.capturedUid, 'red');
   assert.equal(result.room.players.red.pawns[0], -1);
@@ -70,4 +71,20 @@ test('the exact final move records the winner', () => {
   assert.equal(result.room.status, 'finished');
   assert.equal(result.room.winnerUid, 'red');
   assert.equal(result.room.players.red.pawns[0], 57);
+});
+
+test('a duo match is won only when both partners finish all pawns', () => {
+  const finished = { 0: 57, 1: 57, 2: 57, 3: 57 };
+  const room = makeRoom({
+    red: { color: 0, team: 0, pawns: newPawns() },
+    blue: { color: 1, team: 1, pawns: { ...finished, 0: 56 } },
+    green: { color: 2, team: 0, pawns: newPawns() },
+    yellow: { color: 3, team: 1, pawns: finished }
+  }, 'blue', 1);
+  room.mode = 'duo';
+  room.turnOrder = ['red', 'blue', 'green', 'yellow'];
+
+  const result = movePawn(room, 'blue', 0);
+  assert.equal(result.room.status, 'finished');
+  assert.equal(result.room.winningTeam, 1);
 });

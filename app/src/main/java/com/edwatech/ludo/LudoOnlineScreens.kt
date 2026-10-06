@@ -1,9 +1,11 @@
 package com.edwatech.ludo
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -17,6 +19,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -26,12 +30,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.text.input.ImeAction
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 private val screenBackground = Color(0xFFF2F0E8)
 private val screenInk = Color(0xFF17312B)
@@ -43,14 +42,15 @@ private val rankColors = mapOf(
     "Platinum" to Color(0xFF278A82),
     "Diamond" to Color(0xFF2978A8),
     "Master" to Color(0xFF8A5AA5),
-    "Legend" to Color(0xFFB5483D),
+    "Legende" to Color(0xFFB5483D),
     "Mythic" to Color(0xFF38304E)
 )
 
 @Composable
 fun LudoHomeMenu(
     onLocal: () -> Unit,
-    onOnline: () -> Unit,
+    onRooms: () -> Unit,
+    onMatchmaking: () -> Unit,
     onLeaderboard: () -> Unit,
     onAdmin: () -> Unit
 ) {
@@ -63,15 +63,44 @@ fun LudoHomeMenu(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(18.dp))
-        Text("LUDO EXPRESS", color = screenInk, fontSize = 30.sp, fontWeight = FontWeight.Black)
-        Text("MATCHES • RANKED • SAISON DE 60 JOURS", color = screenMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
-        MenuButton("Jouer en ligne", "Créer ou rejoindre une salle", onOnline, Color(0xFF17312B))
+        HaitiFlagPanel(Modifier.height(166.dp))
+        MenuButton("Rooms privées", "Créer une salle ou saisir un code", onRooms, Color(0xFF17312B))
+        MenuButton("Matchmaking ranked", "Solo vs Solo • Duo vs Duo", onMatchmaking, Color(0xFF278A82))
         MenuButton("Classement régional", "Top 200 • badges de saison", onLeaderboard, Color(0xFF278A82))
         MenuButton("Partie locale", "Deux joueurs sur cet appareil", onLocal, Color(0xFFE85D52))
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onAdmin) { Text("Administration", color = screenMuted) }
+    }
+}
+
+@Composable
+internal fun HaitiFlagPanel(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))) {
+        Canvas(Modifier.matchParentSize()) {
+            drawRect(Color(0xFF00209F))
+            drawRect(Color(0xFFD21034), Offset(0f, size.height / 2f), Size(size.width, size.height / 2f))
+            val emblemWidth = size.width * 0.2f
+            val emblemHeight = size.height * 0.34f
+            val emblemLeft = (size.width - emblemWidth) / 2f
+            val emblemTop = (size.height - emblemHeight) / 2f
+            drawRoundRect(
+                Color.White,
+                Offset(emblemLeft, emblemTop),
+                Size(emblemWidth, emblemHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.minDimension * 0.02f)
+            )
+            drawRect(Color(0xFF00209F), Offset(emblemLeft + emblemWidth * 0.12f, emblemTop + emblemHeight * 0.14f), Size(emblemWidth * 0.76f, emblemHeight * 0.28f))
+            drawRect(Color(0xFFD21034), Offset(emblemLeft + emblemWidth * 0.12f, emblemTop + emblemHeight * 0.52f), Size(emblemWidth * 0.76f, emblemHeight * 0.28f))
+        }
+        Column(
+            Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text("LUDO EXPRESS", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
+            Text("MADE BY EDWATECH  •  🇭🇹", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("MATCHES • RANKED • SAISON DE 60 JOURS", color = Color.White.copy(alpha = 0.86f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -267,6 +296,218 @@ fun OnlineLobbyScreen(onBack: () -> Unit) {
 }
 
 @Composable
+fun MatchmakingScreen(onBack: () -> Unit) {
+    val repository = remember { FirebaseLudoRepository() }
+    var hasAccount by remember { mutableStateOf(repository.hasPlayerAccount) }
+    var uid by remember { mutableStateOf(repository.currentUid) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+    var region by remember { mutableStateOf("HT") }
+    var mode by remember { mutableStateOf("solo") }
+    var season by remember { mutableStateOf<SeasonInfo?>(null) }
+    var queueActive by remember { mutableStateOf(false) }
+    var activeRoomId by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Chargement de la saison ranked…") }
+
+    LaunchedEffect(Unit) {
+        repository.ensureGuest { _, authError ->
+            if (authError != null) status = authError
+            else repository.getSeason { value, seasonError ->
+                season = value
+                status = seasonError ?: "Saison ranked prête."
+            }
+        }
+    }
+
+    DisposableEffect(season?.id, queueActive, uid, region, mode) {
+        val currentSeason = season
+        val currentUid = uid
+        if (!queueActive || currentSeason == null || currentUid == null) {
+            onDispose { }
+        } else {
+            val listener = repository.observeQueueTicket(
+                currentSeason.id,
+                region,
+                mode,
+                currentUid,
+                onTicket = { ticket ->
+                    if (ticket?.status == "matched" && ticket.roomId != null) {
+                        activeRoomId = ticket.roomId
+                        queueActive = false
+                        status = "Match trouvé."
+                    }
+                },
+                onError = { status = it }
+            )
+            onDispose {
+                repository.removeQueueTicketListener(currentSeason.id, region, mode, currentUid, listener)
+            }
+        }
+    }
+
+    val roomId = activeRoomId
+    if (roomId != null && uid != null) {
+        OnlineRoomScreen(
+            repository = repository,
+            roomId = roomId,
+            uid = uid!!,
+            createdCode = null,
+            onBack = {
+                repository.leaveMatchmaking(region, mode) { }
+                activeRoomId = null
+            }
+        )
+        return
+    }
+
+    fun enterQueue() {
+        val cleanName = displayName.trim()
+        val cleanRegion = region.trim().uppercase()
+        if (cleanName.length !in 2..24 || !cleanRegion.matches(Regex("[A-Z]{2}"))) {
+            status = "Entre un pseudo valide et un code région à deux lettres, comme HT."
+            return
+        }
+        val currentSeason = season
+        if (currentSeason == null) {
+            status = "La saison ranked n’est pas encore chargée."
+            return
+        }
+        busy = true
+        repository.setProfile(cleanName, cleanRegion) { profileError ->
+            if (profileError != null) {
+                busy = false
+                status = profileError
+                return@setProfile
+            }
+            region = cleanRegion
+            queueActive = true
+            repository.joinMatchmaking(mode) { ticket, queueError ->
+                busy = false
+                if (queueError != null) {
+                    queueActive = false
+                    status = queueError
+                } else if (ticket?.status == "matched" && ticket.roomId != null) {
+                    activeRoomId = ticket.roomId
+                    queueActive = false
+                } else {
+                    status = if (mode == "solo") "Recherche d’un joueur dans $cleanRegion…"
+                    else "Recherche de trois joueurs pour le match Duo dans $cleanRegion…"
+                }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(screenBackground).verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        TextButton(onClick = onBack) { Text("← Menu") }
+        HaitiFlagPanel(Modifier.height(96.dp))
+        Text("MATCHMAKING RANKED", color = screenInk, fontSize = 23.sp, fontWeight = FontWeight.Black)
+        season?.let { Text("SAISON ${it.number}  •  RESET DANS ${((it.endsAt - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L).toInt()} JOURS", color = screenMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+        if (!hasAccount) {
+            Text("Un compte e-mail est requis pour protéger tes points et ton classement.", color = screenMuted, fontSize = 13.sp)
+            OutlinedTextField(email, { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text("E-mail") }, singleLine = true)
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Mot de passe") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        busy = true
+                        repository.createAccount(email, password) { error ->
+                            busy = false
+                            if (error == null) {
+                                uid = repository.currentUid
+                                hasAccount = repository.hasPlayerAccount
+                                password = ""
+                                status = "Compte créé. Choisis un mode ranked."
+                            } else status = error
+                        }
+                    },
+                    enabled = !busy
+                ) { Text("Créer un compte") }
+                Button(
+                    onClick = {
+                        busy = true
+                        repository.signIn(email, password) { error ->
+                            busy = false
+                            if (error == null) {
+                                uid = repository.currentUid
+                                hasAccount = repository.hasPlayerAccount
+                                password = ""
+                                status = "Connexion réussie."
+                            } else status = error
+                        }
+                    },
+                    enabled = !busy,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = screenInk)
+                ) { Text("Connexion") }
+            }
+        } else {
+            OutlinedTextField(displayName, { displayName = it.take(24) }, modifier = Modifier.fillMaxWidth(), label = { Text("Pseudo") }, singleLine = true)
+            OutlinedTextField(
+                value = region,
+                onValueChange = { region = it.filter(Char::isLetter).take(2).uppercase() },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Région (ex. HT)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("solo" to "SOLO", "duo" to "DUO").forEach { (value, label) ->
+                    val selected = mode == value
+                    Button(
+                        onClick = { if (!queueActive) mode = value },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (selected) screenInk else Color(0xFFD8D8D0))
+                    ) { Text(label, color = if (selected) Color.White else screenInk) }
+                }
+            }
+            Text(
+                text = if (mode == "solo") "1 contre 1 • cherche un adversaire de la même région."
+                else "2 contre 2 • quatre joueurs, deux équipes de partenaires.",
+                color = screenMuted,
+                fontSize = 13.sp
+            )
+            if (queueActive) {
+                Text(status, color = screenInk, fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    onClick = {
+                        busy = true
+                        repository.leaveMatchmaking(region, mode) { error ->
+                            busy = false
+                            queueActive = false
+                            status = error ?: "Recherche annulée."
+                        }
+                    },
+                    enabled = !busy
+                ) { Text("Annuler la recherche") }
+            } else {
+                Button(
+                    onClick = { enterQueue() },
+                    enabled = !busy && season != null,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF278A82))
+                ) { Text(if (busy) "Connexion…" else "Rechercher un match ranked") }
+            }
+        }
+        Text(status, color = screenMuted, fontSize = 13.sp)
+    }
+}
+
+@Composable
 private fun OnlineRoomScreen(
     repository: FirebaseLudoRepository,
     roomId: String,
@@ -293,6 +534,7 @@ private fun OnlineRoomScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         TextButton(onClick = onBack) { Text("← Quitter la vue") }
+        HaitiFlagPanel(Modifier.height(84.dp))
         Text("SALLE EN LIGNE", color = screenInk, fontSize = 24.sp, fontWeight = FontWeight.Black)
         val code = room?.code ?: createdCode.orEmpty()
         if (code.isNotBlank()) {
@@ -333,25 +575,36 @@ private fun OnlineBoard(
     onMessage: (String) -> Unit
 ) {
     val self = room.players.firstOrNull { it.uid == uid }
-    val activeColor = room.players.firstOrNull { it.uid == room.activeUid }?.color ?: -1
     val myTurn = room.status == "playing" && self?.uid == room.activeUid
-    val redPawns = room.players.firstOrNull { it.color == 0 }?.pawns ?: List(4) { -1 }
-    val tealPawns = room.players.firstOrNull { it.color == 1 }?.pawns ?: List(4) { -1 }
-    val playerPawns = if (self?.color == 1) tealPawns else redPawns
+    val seatColors = if (room.mode == "duo") listOf(0, 1, 2, 3) else listOf(0, 2)
+    val boardPawns = seatColors.map { color ->
+        room.players.firstOrNull { it.color == color }?.pawns ?: List(4) { -1 }
+    }
+    val playerPawns = self?.pawns ?: List(4) { -1 }
+    val playerSlot = seatColors.indexOf(self?.color).coerceAtLeast(0)
     val movable = if (myTurn && room.dice > 0) {
         playerPawns.indices.filter { onlineCanMove(playerPawns[it], room.dice) }.toSet()
     } else emptySet()
 
-    Text("${room.players.firstOrNull { it.color == 0 }?.displayName ?: "Rouge"}  VS  ${room.players.firstOrNull { it.color == 1 }?.displayName ?: "Turquoise"}", color = screenInk, fontWeight = FontWeight.Bold)
+    val teamOne = room.players.filter { if (room.mode == "duo") it.color % 2 == 0 else it.color == 0 }
+        .joinToString(" + ") { it.displayName }
+    val teamTwo = room.players.filter { if (room.mode == "duo") it.color % 2 == 1 else it.color == 2 }
+        .joinToString(" + ") { it.displayName }
+    Text("${if (room.mode == "duo") "DUO RANKED" else if (room.ranked) "SOLO RANKED" else "ROOM PRIVÉE"}", color = screenMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    Text("${teamOne.ifBlank { "Rouge" }}  VS  ${teamTwo.ifBlank { "Vert" }}", color = screenInk, fontWeight = FontWeight.Bold)
     LudoBoard(
-        pawns = listOf(redPawns, tealPawns),
-        activePlayer = activeColor.coerceIn(0, 1),
+        pawns = boardPawns,
+        activePlayer = playerSlot.coerceIn(0, boardPawns.lastIndex),
         movablePawns = movable,
         modifier = Modifier.fillMaxWidth()
     )
 
     when (room.status) {
-        "finished" -> Text("${room.players.firstOrNull { it.uid == room.winnerUid }?.displayName ?: "Joueur"} gagne • classement mis à jour", color = Color(0xFFB17B11), fontWeight = FontWeight.Bold)
+        "finished" -> {
+            val winners = if (room.mode == "duo") room.players.filter { it.color % 2 == room.winningTeam }
+            else room.players.filter { it.uid == room.winnerUid }
+            Text("${winners.joinToString(" + ") { it.displayName }} gagne • classement mis à jour", color = Color(0xFFB17B11), fontWeight = FontWeight.Bold)
+        }
         else -> Text(if (myTurn) "À toi de jouer" else "Tour de ${room.players.firstOrNull { it.uid == room.activeUid }?.displayName ?: "l’adversaire"}", color = screenInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
     }
     Text("Dé : ${if (room.dice == 0) room.lastDice.takeIf { it > 0 } ?: "–" else room.dice}", color = screenInk, fontSize = 18.sp)
@@ -378,7 +631,12 @@ private fun OnlineBoard(
                 contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (self?.color == 1) Color(0xFF278A82) else Color(0xFFE85D52),
+                    containerColor = when (self?.color) {
+                        1 -> Color(0xFF2978A8)
+                        2 -> Color(0xFF278A82)
+                        3 -> Color(0xFFE4B33F)
+                        else -> Color(0xFFE85D52)
+                    },
                     disabledContainerColor = Color(0xFFD8D8D0)
                 )
             ) {
@@ -398,6 +656,7 @@ fun LeaderboardScreen(onBack: () -> Unit) {
     val repository = remember { FirebaseLudoRepository() }
     var season by remember { mutableStateOf<SeasonInfo?>(null) }
     var region by remember { mutableStateOf("HT") }
+    var mode by remember { mutableStateOf("solo") }
     var entries by remember { mutableStateOf<List<RankEntry>>(emptyList()) }
     var error by remember { mutableStateOf("") }
 
@@ -407,7 +666,7 @@ fun LeaderboardScreen(onBack: () -> Unit) {
             else repository.getSeason { value, seasonError -> season = value; if (seasonError != null) error = seasonError }
         }
     }
-    DisposableEffect(season?.id, region) {
+    DisposableEffect(season?.id, region, mode) {
         val currentSeason = season
         if (currentSeason == null || !region.matches(Regex("[A-Za-z]{2}"))) {
             onDispose { }
@@ -415,6 +674,7 @@ fun LeaderboardScreen(onBack: () -> Unit) {
             val (query, listener) = repository.observeLeaderboard(
                 currentSeason.id,
                 region,
+                mode,
                 onEntries = { entries = it; error = "" },
                 onError = { error = it }
             )
@@ -428,6 +688,17 @@ fun LeaderboardScreen(onBack: () -> Unit) {
     ) {
         TextButton(onClick = onBack) { Text("← Menu") }
         Text("CLASSEMENT RÉGIONAL", color = screenInk, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("solo" to "SOLO", "duo" to "DUO").forEach { (value, label) ->
+                val selected = mode == value
+                Button(
+                    onClick = { mode = value },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (selected) screenInk else Color(0xFFD8D8D0))
+                ) { Text(label, color = if (selected) Color.White else screenInk) }
+            }
+        }
         OutlinedTextField(
             value = region,
             onValueChange = { region = it.filter(Char::isLetter).take(2).uppercase() },

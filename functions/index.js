@@ -17,6 +17,7 @@ const {
 initializeApp();
 
 const REGION = 'us-central1';
+const QUEUE_TTL_MS = 5 * 60 * 1000;
 const ADMIN_BOOTSTRAP_CODE = defineSecret('LUDO_ADMIN_BOOTSTRAP_CODE');
 const db = getDatabase();
 
@@ -99,16 +100,18 @@ function rankEntryUpdate(current, profile, delta, won, matchId, region, now) {
 }
 
 async function awardFinishedMatch(roomId, room) {
-  if (room.status !== 'finished' || !room.winnerUid || !room.seasonId || !room.region) return;
+  if (room.status !== 'finished' || !room.seasonId || !room.region) return;
+  if (room.mode === 'duo' ? !Number.isInteger(room.winningTeam) : !room.winnerUid) return;
   const now = Date.now();
   const players = Object.entries(room.players || {});
   await Promise.all(players.map(async ([uid, player]) => {
-    const ref = db.ref(`ludo/seasons/${room.seasonId}/regions/${room.region}/players/${uid}`);
+    const won = room.mode === 'duo' ? player.team === room.winningTeam : uid === room.winnerUid;
+    const ref = db.ref(`ludo/seasons/${room.seasonId}/regions/${room.region}/modes/${room.mode}/players/${uid}`);
     await ref.transaction(current => rankEntryUpdate(
       current,
       { displayName: player.displayName || 'Player' },
-      uid === room.winnerUid ? 100 : 25,
-      uid === room.winnerUid,
+      won ? 100 : 25,
+      won,
       roomId,
       room.region,
       now
@@ -165,9 +168,13 @@ exports.createRoom = onCall({ region: REGION }, async request => {
         [auth.uid]: {
           displayName: profile.displayName,
           color: 0,
+          team: 0,
           pawns: newPawns()
         }
       },
+      mode: 'room',
+      ranked: false,
+      turnOrder: [auth.uid],
       activeUid: auth.uid,
       dice: 0,
       createdAt: Date.now(),
@@ -196,7 +203,7 @@ exports.joinRoom = onCall({ region: REGION }, async request => {
   const roomRef = db.ref(`ludo/rooms/${roomId}`);
   let failure = 'Room is no longer available.';
   const result = await roomRef.transaction(current => {
-    if (!current || current.status !== 'waiting') return;
+    if (!current || current.status !== 'waiting' || Object.keys(current.players || {}).length !== 1) return;
     if (current.players?.[auth.uid]) return;
     if (current.region !== profile.region) {
       failure = 'Both players must choose the same region.';
@@ -206,9 +213,11 @@ exports.joinRoom = onCall({ region: REGION }, async request => {
     if (!hostUid) return;
     current.players[auth.uid] = {
       displayName: profile.displayName,
-      color: 1,
+      color: 2,
+      team: 1,
       pawns: newPawns()
     };
+    current.turnOrder = [...(current.turnOrder || Object.keys(current.players)), auth.uid];
     current.status = 'playing';
     current.activeUid = hostUid;
     current.startedAt = Date.now();
@@ -217,6 +226,103 @@ exports.joinRoom = onCall({ region: REGION }, async request => {
   });
   if (!result.committed) throw new HttpsError('failed-precondition', failure);
   return { roomId, code, room: result.snapshot.val() };
+});
+
+exports.joinMatchmaking = onCall({ region: REGION }, async request => {
+  const auth = await requirePlayer(request);
+  const profile = await getProfile(auth.uid);
+  const mode = request.data?.mode;
+  if (mode !== 'solo' && mode !== 'duo') {
+    throw new HttpsError('invalid-argument', 'Choose Solo or Duo matchmaking.');
+  }
+
+  const season = seasonFor();
+  const groupSize = mode === 'solo' ? 2 : 4;
+  const queueRef = db.ref(`ludo/queues/${season.id}/${profile.region}/${mode}`);
+  const proposedRoomId = db.ref('ludo/rooms').push().key;
+  const now = Date.now();
+  const result = await queueRef.transaction(current => {
+    const queue = current || {};
+    for (const [queuedUid, ticket] of Object.entries(queue)) {
+      if (ticket.status === 'waiting' && ticket.joinedAt < now - QUEUE_TTL_MS) delete queue[queuedUid];
+    }
+
+    const ownTicket = queue[auth.uid];
+    if (ownTicket?.status === 'matched') return queue;
+
+    const waiting = Object.entries(queue)
+      .filter(([queuedUid, ticket]) => queuedUid !== auth.uid && ticket.status === 'waiting')
+      .sort((left, right) => left[1].joinedAt - right[1].joinedAt)
+      .slice(0, groupSize - 1)
+      .map(([, ticket]) => ticket);
+
+    const own = ownTicket || {
+      uid: auth.uid,
+      displayName: profile.displayName,
+      region: profile.region,
+      joinedAt: now
+    };
+    if (waiting.length < groupSize - 1) {
+      queue[auth.uid] = { ...own, status: 'waiting', mode, joinedAt: own.joinedAt || now };
+      return queue;
+    }
+
+    const group = [...waiting, own].sort((left, right) => left.joinedAt - right.joinedAt);
+    for (const ticket of group) {
+      queue[ticket.uid] = { ...ticket, mode, status: 'matched', roomId: proposedRoomId, matchedAt: now };
+    }
+    return queue;
+  });
+
+  if (!result.committed) throw new HttpsError('aborted', 'Could not join matchmaking. Try again.');
+  const queue = result.snapshot.val() || {};
+  const ticket = queue[auth.uid];
+  if (ticket?.status !== 'matched' || !ticket.roomId) return { status: 'waiting' };
+
+  const matched = Object.values(queue)
+    .filter(entry => entry.status === 'matched' && entry.roomId === ticket.roomId)
+    .sort((left, right) => left.joinedAt - right.joinedAt);
+  if (matched.length !== groupSize) throw new HttpsError('aborted', 'Match group is incomplete. Try again.');
+
+  const colors = mode === 'solo' ? [0, 2] : [0, 1, 2, 3];
+  const turnOrder = matched.map(entry => entry.uid);
+  const room = {
+    code: '',
+    mode,
+    ranked: true,
+    status: 'playing',
+    seasonId: season.id,
+    seasonEndsAt: season.endsAt,
+    region: profile.region,
+    turnOrder,
+    players: Object.fromEntries(matched.map((entry, index) => {
+      const color = colors[index];
+      return [entry.uid, {
+        displayName: entry.displayName,
+        color,
+        team: mode === 'duo' ? color % 2 : color,
+        pawns: newPawns()
+      }];
+    })),
+    activeUid: turnOrder[0],
+    dice: 0,
+    createdAt: now,
+    startedAt: now,
+    lastActionAt: now
+  };
+  await db.ref(`ludo/rooms/${ticket.roomId}`).transaction(current => current || room);
+  return { status: 'matched', roomId: ticket.roomId };
+});
+
+exports.leaveMatchmaking = onCall({ region: REGION }, async request => {
+  const auth = await requirePlayer(request);
+  const season = seasonFor();
+  const region = normalizeRegion(request.data?.region);
+  const mode = request.data?.mode;
+  if (mode !== 'solo' && mode !== 'duo') throw new HttpsError('invalid-argument', 'Choose Solo or Duo.');
+  const ticketRef = db.ref(`ludo/queues/${season.id}/${region}/${mode}/${auth.uid}`);
+  const result = await ticketRef.transaction(current => current ? null : current);
+  return { cancelled: result.committed && !result.snapshot.exists() };
 });
 
 exports.rollDice = onCall({ region: REGION }, async request => {
@@ -237,7 +343,9 @@ exports.rollDice = onCall({ region: REGION }, async request => {
     current.lastDice = dice;
     current.lastActionAt = Date.now();
     if (choices.length === 0) {
-      const nextUid = Object.keys(current.players).find(uid => uid !== auth.uid);
+      const order = current.turnOrder || Object.keys(current.players);
+      const currentIndex = order.indexOf(auth.uid);
+      const nextUid = order[(currentIndex + 1) % order.length];
       current.activeUid = nextUid;
       current.dice = 0;
       current.message = `${dice}: no legal move`;
@@ -350,8 +458,20 @@ exports.claimAdmin = onCall({ region: REGION, secrets: [ADMIN_BOOTSTRAP_CODE] },
     throw new HttpsError('permission-denied', 'Admin code was not accepted.');
   }
 
+  const bootstrapRef = db.ref('ludo/adminBootstrapClaimed');
+  const bootstrap = await bootstrapRef.transaction(current => current || { uid, claimedAt: now });
+  const claim = bootstrap.snapshot.val();
+  if (!claim || claim.uid !== uid) {
+    throw new HttpsError('permission-denied', 'Admin bootstrap has already been claimed.');
+  }
+
   const user = await getAuth().getUser(uid);
-  await getAuth().setCustomUserClaims(uid, { ...(user.customClaims || {}), ludoAdmin: true });
+  try {
+    await getAuth().setCustomUserClaims(uid, { ...(user.customClaims || {}), ludoAdmin: true });
+  } catch (error) {
+    if (bootstrap.committed) await bootstrapRef.remove();
+    throw error;
+  }
   await attemptsRef.remove();
   return { admin: true, refreshToken: true };
 });

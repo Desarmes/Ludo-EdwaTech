@@ -47,12 +47,20 @@ private val trackCells = buildList {
 
 private val homeLanes = listOf(
     listOf(7 to 1, 7 to 2, 7 to 3, 7 to 4, 7 to 5),
-    listOf(7 to 13, 7 to 12, 7 to 11, 7 to 10, 7 to 9)
+    listOf(1 to 7, 2 to 7, 3 to 7, 4 to 7, 5 to 7),
+    listOf(7 to 13, 7 to 12, 7 to 11, 7 to 10, 7 to 9),
+    listOf(13 to 7, 12 to 7, 11 to 7, 10 to 7, 9 to 7)
 )
-private val startIndices = listOf(0, 26)
+private val startIndices = listOf(0, 13, 26, 39)
 private val safeTrackIndices = setOf(0, 13, 26, 39)
-private val playerColors = listOf(Color(0xFFE85D52), Color(0xFF278A82))
-private val playerNames = listOf("Rouge", "Turquoise")
+private val boardPlayerColors = listOf(
+    Color(0xFFE85D52),
+    Color(0xFF2978A8),
+    Color(0xFF278A82),
+    Color(0xFFE4B33F)
+)
+private val playerColors = listOf(boardPlayerColors[0], boardPlayerColors[2])
+private val playerNames = listOf("Rouge", "Vert")
 private val boardColor = Color(0xFFF2F0E8)
 private val inkColor = Color(0xFF17312B)
 
@@ -73,7 +81,8 @@ fun LudoMainScreen() {
     if (page == "home") {
         LudoHomeMenu(
             onLocal = { page = "local" },
-            onOnline = { page = "online" },
+            onRooms = { page = "online" },
+            onMatchmaking = { page = "match" },
             onLeaderboard = { page = "rank" },
             onAdmin = { page = "admin" }
         )
@@ -81,6 +90,10 @@ fun LudoMainScreen() {
     }
     if (page == "online") {
         OnlineLobbyScreen(onBack = { page = "home" })
+        return
+    }
+    if (page == "match") {
+        MatchmakingScreen(onBack = { page = "home" })
         return
     }
     if (page == "rank") {
@@ -114,6 +127,7 @@ fun LudoMainScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         TextButton(onClick = { page = "home" }) { Text("← MENU", color = inkColor) }
+        HaitiFlagPanel(Modifier.height(84.dp))
         Text(
             text = "LUDO EXPRESS",
             color = inkColor,
@@ -278,14 +292,18 @@ internal fun LudoBoard(
             top + (row + 0.5f) * cell
         )
 
-        drawRect(playerColors[0].copy(alpha = 0.16f), Offset(left, top + cell * 9), Size(cell * 6, cell * 6))
-        drawRect(playerColors[1].copy(alpha = 0.16f), Offset(left + cell * 9, top), Size(cell * 6, cell * 6))
+        drawRect(boardPlayerColors[0].copy(alpha = 0.16f), Offset(left, top + cell * 9), Size(cell * 6, cell * 6))
+        drawRect(boardPlayerColors[1].copy(alpha = 0.16f), Offset(left, top), Size(cell * 6, cell * 6))
+        drawRect(boardPlayerColors[2].copy(alpha = 0.16f), Offset(left + cell * 9, top), Size(cell * 6, cell * 6))
+        drawRect(boardPlayerColors[3].copy(alpha = 0.16f), Offset(left + cell * 9, top + cell * 9), Size(cell * 6, cell * 6))
         drawRect(Color(0xFFE5E2D8), Offset(left + cell * 6, top + cell * 6), Size(cell * 3, cell * 3))
 
         trackCells.forEachIndexed { index, (row, column) ->
             val cellColor = when (index) {
-                0 -> playerColors[0]
-                26 -> playerColors[1]
+                0 -> boardPlayerColors[0]
+                13 -> boardPlayerColors[1]
+                26 -> boardPlayerColors[2]
+                39 -> boardPlayerColors[3]
                 in safeTrackIndices -> Color(0xFFFFD77A)
                 else -> Color.White
             }
@@ -300,7 +318,7 @@ internal fun LudoBoard(
         homeLanes.forEachIndexed { player, lane ->
             lane.forEach { (row, column) ->
                 drawRoundRect(
-                    color = playerColors[player].copy(alpha = 0.58f),
+                    color = boardPlayerColors[player].copy(alpha = 0.58f),
                     topLeft = Offset(left + column * cell + cell * 0.06f, top + row * cell + cell * 0.06f),
                     size = Size(cell * 0.88f, cell * 0.88f),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(cell * 0.12f)
@@ -311,15 +329,18 @@ internal fun LudoBoard(
 
         val baseCells = listOf(
             listOf(10 to 2, 10 to 4, 12 to 2, 12 to 4),
-            listOf(2 to 10, 2 to 12, 4 to 10, 4 to 12)
+            listOf(2 to 2, 2 to 4, 4 to 2, 4 to 4),
+            listOf(2 to 10, 2 to 12, 4 to 10, 4 to 12),
+            listOf(10 to 10, 10 to 12, 12 to 10, 12 to 12)
         )
         pawns.forEachIndexed { player, playerPawns ->
+            val seat = if (pawns.size == 2) listOf(0, 2)[player] else player
             playerPawns.forEachIndexed { pawn, progress ->
                 val position = when {
-                    progress < 0 -> baseCells[player][pawn]
+                    progress < 0 -> baseCells[seat][pawn]
                     progress == 57 -> 7 to 7
-                    progress >= 52 -> homeLanes[player][progress - 52]
-                    else -> trackCells[(startIndices[player] + progress) % trackCells.size]
+                    progress >= 52 -> homeLanes[seat][progress - 52]
+                    else -> trackCells[(startIndices[seat] + progress) % trackCells.size]
                 }
                 val stackOffset = Offset(
                     ((pawn % 2) - 0.5f) * cell * 0.18f,
@@ -331,7 +352,7 @@ internal fun LudoBoard(
                     drawCircle(Color(0xFFFFC94A), radius = cell * 0.36f, center = pawnCenter)
                 }
                 drawCircle(Color.White, radius = cell * 0.28f, center = pawnCenter)
-                drawCircle(playerColors[player], radius = cell * 0.2f, center = pawnCenter)
+                drawCircle(boardPlayerColors[seat], radius = cell * 0.2f, center = pawnCenter)
                 drawCircle(
                     color = Color(0xFF17312B),
                     radius = cell * 0.2f,

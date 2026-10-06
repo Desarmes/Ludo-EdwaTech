@@ -19,13 +19,21 @@ import com.google.firebase.functions.FirebaseFunctions
 data class OnlineRoom(
     val id: String,
     val code: String,
+    val mode: String,
+    val ranked: Boolean,
     val status: String,
     val players: List<OnlinePlayer>,
     val activeUid: String,
     val dice: Int,
     val lastDice: Int,
     val winnerUid: String?,
+    val winningTeam: Int?,
     val message: String
+)
+
+data class QueueTicket(
+    val status: String,
+    val roomId: String?
 )
 
 data class SeasonInfo(
@@ -131,6 +139,60 @@ class FirebaseLudoRepository {
         }
     }
 
+    fun joinMatchmaking(mode: String, onComplete: (QueueTicket?, String?) -> Unit) {
+        call("joinMatchmaking", mapOf("mode" to mode)) { result, error ->
+            if (error != null || result == null) {
+                onComplete(null, error ?: "Could not join matchmaking.")
+            } else {
+                onComplete(
+                    QueueTicket(result.string("status"), result["roomId"] as? String),
+                    null
+                )
+            }
+        }
+    }
+
+    fun leaveMatchmaking(region: String, mode: String, onComplete: (String?) -> Unit) {
+        call("leaveMatchmaking", mapOf("region" to region, "mode" to mode)) { _, error -> onComplete(error) }
+    }
+
+    fun observeQueueTicket(
+        seasonId: String,
+        region: String,
+        mode: String,
+        uid: String,
+        onTicket: (QueueTicket?) -> Unit,
+        onError: (String) -> Unit
+    ): ValueEventListener {
+        val reference = database.reference.child("ludo")
+            .child("queues").child(seasonId).child(region.uppercase()).child(mode).child(uid)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                onTicket(if (snapshot.exists()) QueueTicket(
+                    status = snapshot.child("status").getValue(String::class.java) ?: "waiting",
+                    roomId = snapshot.child("roomId").getValue(String::class.java)
+                ) else null)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                onError(error.message)
+            }
+        }
+        reference.addValueEventListener(listener)
+        return listener
+    }
+
+    fun removeQueueTicketListener(
+        seasonId: String,
+        region: String,
+        mode: String,
+        uid: String,
+        listener: ValueEventListener
+    ) {
+        database.reference.child("ludo").child("queues").child(seasonId)
+            .child(region.uppercase()).child(mode).child(uid).removeEventListener(listener)
+    }
+
     fun rollDice(roomId: String, onComplete: (String?) -> Unit) {
         call("rollDice", mapOf("roomId" to roomId)) { _, error -> onComplete(error) }
     }
@@ -165,6 +227,7 @@ class FirebaseLudoRepository {
     fun observeLeaderboard(
         seasonId: String,
         region: String,
+        mode: String,
         onEntries: (List<RankEntry>) -> Unit,
         onError: (String) -> Unit
     ): Pair<Query, ValueEventListener> {
@@ -174,6 +237,8 @@ class FirebaseLudoRepository {
             .child(seasonId)
             .child("regions")
             .child(region.uppercase())
+            .child("modes")
+            .child(mode)
             .child("players")
             .orderByChild("points")
             .limitToLast(200)
@@ -285,12 +350,15 @@ private fun DataSnapshot.toOnlineRoom(roomId: String): OnlineRoom? {
     return OnlineRoom(
         id = roomId,
         code = child("code").getValue(String::class.java) ?: "",
+        mode = child("mode").getValue(String::class.java) ?: "room",
+        ranked = child("ranked").getValue(Boolean::class.javaObjectType) ?: false,
         status = child("status").getValue(String::class.java) ?: "waiting",
         players = players,
         activeUid = child("activeUid").getValue(String::class.java) ?: "",
         dice = child("dice").intValue(),
         lastDice = child("lastDice").intValue(),
         winnerUid = child("winnerUid").getValue(String::class.java),
+        winningTeam = child("winningTeam").getValue(Int::class.javaObjectType),
         message = child("message").getValue(String::class.java) ?: ""
     )
 }

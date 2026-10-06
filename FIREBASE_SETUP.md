@@ -9,7 +9,7 @@
 
 ## Sekrè admin
 
-Kòd admin ki te parèt nan ansyen kòd/konvèsasyon an pa dwe itilize ankò. Kreye yon nouvo kòd prive; pa mete li nan Kotlin, GitHub, oswa `google-services.json`.
+Kòd admin ki te parèt nan ansyen kòd/konvèsasyon an pa dwe itilize ankò. Kreye yon nouvo kòd prive; pa mete li nan Kotlin, GitHub, oswa `google-services.json`. Se yon sèl UID ki ka reklame dwa admin yo ak kòd bootstrap la.
 
 Nan tèminal ki konekte ak pwojè w la, konekte Firebase CLI epi antre sekrè a nan prompt CLI a (pa nan chat):
 
@@ -21,6 +21,14 @@ npx firebase-tools functions:secrets:set LUDO_ADMIN_BOOTSTRAP_CODE --project edw
 Apre deploy Functions yo, kreye yon kont admin ak e-mail/modpas Firebase pa w nan panèl la, epi aktive dwa admin ak nouvo kòd la. Fonksyon sèvè a bay custom claim la; modpas/kòd la pa estoke nan APK a.
 
 Match ranked yo mande kont e-mail/modpas ki rete estab; kont anonim yo ka sèlman li klasman piblik la. Sa fè bannisman yo mare ak yon UID ki ka retounen sou yon lòt aparèy.
+
+## Modes et klasman
+
+- **Rooms privées**: de jwè antre ak menm kòd la; match sa yo pa bay pwen ranked.
+- **Matchmaking Solo**: de jwè nan menm rejyon ak sezon an.
+- **Matchmaking Duo**: kat jwè, de ekip; wouj + vèt jwe kont ble + jòn.
+- Sezon yo dire egzakteman 60 jou UTC. Top 200 la separe nan `ludo/seasons/{seasonId}/regions/{region}/modes/{solo|duo}/players`.
+- Pwen, tiraj ak mouvman yo ekri pa Cloud Functions sèlman; aplikasyon an pa ka modifye nòt yo dirèkteman.
 
 ## Règ Realtime Database
 

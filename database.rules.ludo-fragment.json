@@ -1,6 +1,16 @@
 {
   "rules": {
     "ludo": {
+      "adminBootstrapClaimed": {
+        ".read": false,
+        ".write": false
+      },
+      "adminCodeAttempts": {
+        "$uid": {
+          ".read": false,
+          ".write": false
+        }
+      },
       "rooms": {
         "$roomId": {
           ".read": "auth != null && !root.child('ludo/bans').child(auth.uid).exists() && data.child('players').child(auth.uid).exists()",
@@ -15,10 +25,26 @@
         "$seasonId": {
           "regions": {
             "$region": {
-              "players": {
-                ".read": "auth != null && !root.child('ludo/bans').child(auth.uid).exists()",
-                ".write": false,
-                ".indexOn": ["points"]
+              "modes": {
+                "$mode": {
+                  "players": {
+                    ".read": "auth != null && !root.child('ludo/bans').child(auth.uid).exists()",
+                    ".write": false,
+                    ".indexOn": ["points"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "queues": {
+        "$seasonId": {
+          "$region": {
+            "$mode": {
+              "$uid": {
+                ".read": "auth != null && auth.uid === $uid && !root.child('ludo/bans').child(auth.uid).exists()",
+                ".write": false
               }
             }
           }

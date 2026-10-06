@@ -14,7 +14,7 @@ for (let row = 13; row >= 9; row--) TRACK.push([row, 6]);
 for (let column = 5; column >= 0; column--) TRACK.push([8, column]);
 TRACK.push([7, 0], [6, 0]);
 
-const START_INDEX = { 0: 0, 1: 26 };
+const START_INDEX = { 0: 0, 1: 13, 2: 26, 3: 39 };
 const SAFE_TRACK_INDICES = new Set([0, 13, 26, 39]);
 const RANKS = [
   { name: 'Bronze', points: 0 },
@@ -23,7 +23,7 @@ const RANKS = [
   { name: 'Platinum', points: 1200 },
   { name: 'Diamond', points: 1800 },
   { name: 'Master', points: 2500 },
-  { name: 'Legend', points: 3300 },
+  { name: 'Legende', points: 3300 },
   { name: 'Mythic', points: 4200 }
 ];
 
@@ -56,6 +56,16 @@ function movablePawns(player, dice) {
   return Object.entries(player.pawns || {})
     .filter(([, progress]) => canMove(progress, dice))
     .map(([index]) => Number(index));
+}
+
+function winningDuoTeam(players) {
+  for (const team of [0, 1]) {
+    const teammates = Object.values(players).filter(player => player.team === team);
+    if (teammates.length === 2 && teammates.every(player => Object.values(player.pawns).every(value => value === 57))) {
+      return team;
+    }
+  }
+  return null;
 }
 
 function movePawn(room, uid, pawnIndex) {
@@ -92,13 +102,20 @@ function movePawn(room, uid, pawnIndex) {
 
   next.dice = 0;
   next.lastActionAt = Date.now();
-  if (Object.values(player.pawns).every(value => value === 57)) {
+  const winningTeam = next.mode === 'duo' ? winningDuoTeam(next.players) : null;
+  if (next.mode === 'duo' && winningTeam !== null) {
+    next.status = 'finished';
+    next.winningTeam = winningTeam;
+    next.winnerUid = uid;
+    next.finishedAt = Date.now();
+  } else if (next.mode !== 'duo' && Object.values(player.pawns).every(value => value === 57)) {
     next.status = 'finished';
     next.winnerUid = uid;
     next.finishedAt = Date.now();
   } else if (dice !== 6) {
-    const otherUid = Object.keys(next.players).find(otherUid => otherUid !== uid);
-    next.activeUid = otherUid;
+    const order = next.turnOrder || Object.keys(next.players);
+    const currentIndex = order.indexOf(uid);
+    next.activeUid = order[(currentIndex + 1) % order.length];
   }
 
   return { room: next, capturedUid };
@@ -119,5 +136,6 @@ module.exports = {
   movablePawns,
   newPawns,
   rankForPoints,
-  seasonFor
+  seasonFor,
+  winningDuoTeam
 };
