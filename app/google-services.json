@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "461853817791",
+    "firebase_url": "https://edwa-panel-bot-admin-default-rtdb.firebaseio.com",
+    "project_id": "edwa-panel-bot-admin",
+    "storage_bucket": "edwa-panel-bot-admin.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:461853817791:android:fc3ac55c596f6b45167f0a",
+        "android_client_info": {
+          "package_name": "com.edwa"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyCc7CrO5GShzbB7SvL6_FrA76JYc1AuJHY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:461853817791:android:d887e67c0dd98a06167f0a",
+        "android_client_info": {
+          "package_name": "com.edwatech.ludo"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyCc7CrO5GShzbB7SvL6_FrA76JYc1AuJHY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
