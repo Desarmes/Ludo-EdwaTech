@@ -22,6 +22,9 @@ jobs:
           distribution: "temurin"
           cache: gradle
 
+      - name: Clean Gradle wrapper cache
+        run: rm -rf ~/.gradle/wrapper/dists
+
       - name: Accept Android SDK licenses
         run: |
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
@@ -36,7 +39,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace --info
+        run: ./gradlew assembleDebug --stacktrace --info --no-daemon
 
       - name: Verify APK was created
         run: ls -la app/build/outputs/apk/debug/ || echo "APK not found!"
